@@ -195,7 +195,7 @@ dependencies = ["flask==1.0.x"]
     ----- stdout -----
 
     ----- stderr -----
-    error: Failed to build: file://[TEMP_DIR]/
+    error: Failed to build: `file://[TEMP_DIR]/`
       Caused by: Build backend failed to determine extra requires with `build_wheel()` with exit code: 1
     --- stdout:
     configuration error: `project.dependencies[0]` must be pep508
@@ -2441,7 +2441,7 @@ fn no_build_isolation() -> Result<()> {
 
     ----- stderr -----
     error: Failed to download and build: anyio @ https://files.pythonhosted.org/packages/db/4d/3970183622f0330d3c23d9b8a5f52e365e50381fd484d08e3285104333d3/anyio-4.3.0.tar.gz
-      Caused by: Failed to build: anyio @ https://files.pythonhosted.org/packages/db/4d/3970183622f0330d3c23d9b8a5f52e365e50381fd484d08e3285104333d3/anyio-4.3.0.tar.gz
+      Caused by: Failed to build: `anyio @ https://files.pythonhosted.org/packages/db/4d/3970183622f0330d3c23d9b8a5f52e365e50381fd484d08e3285104333d3/anyio-4.3.0.tar.gz`
       Caused by: Build backend failed to determine metadata through `prepare_metadata_for_build_wheel` with exit status: 1
     --- stdout:
 
@@ -3835,7 +3835,7 @@ fn require_hashes_mismatch() -> Result<()> {
     ----- stdout -----
 
     ----- stderr -----
-    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: idna
+    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: `idna`
     "###
     );
 
@@ -3863,7 +3863,7 @@ fn require_hashes_missing_dependency() -> Result<()> {
     ----- stdout -----
 
     ----- stderr -----
-    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: idna
+    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: `idna`
     "###
     );
 
@@ -3893,7 +3893,7 @@ fn require_hashes_editable() -> Result<()> {
 
     ----- stderr -----
     Built 1 editable in [TIME]
-    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: aiohttp
+    error: In `--require-hashes` mode, all requirements must be pinned upfront with `==`, but found: `aiohttp`
     "###
     );
 
