@@ -1077,7 +1077,7 @@ fn mismatched_name() -> Result<()> {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because foo was found, but has an invalid format and you require foo, we can conclude that the requirements are unsatisfiable.
+      ╰─▶ Because foo has an invalid package format and you require foo, we can conclude that the requirements are unsatisfiable.
 
           hint: The structure of foo was invalid:
             The .dist-info directory tomli-2.0.1 does not start with the normalized package name: foo

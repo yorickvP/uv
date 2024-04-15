@@ -1352,7 +1352,7 @@ fn only_binary_requirements_txt() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because django-allauth==0.51.0 is unusable because no wheels are usable and building from source is disabled and you require django-allauth==0.51.0, we can conclude that the requirements are unsatisfiable.
+      ╰─▶ Because django-allauth==0.51.0 has no usable wheels and building from source is disabled and you require django-allauth==0.51.0, we can conclude that the requirements are unsatisfiable.
     "###
     );
 }

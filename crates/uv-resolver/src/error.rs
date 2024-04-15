@@ -144,7 +144,7 @@ impl From<pubgrub::error::PubGrubError<UvDependencyProvider>> for ResolveError {
 /// A wrapper around [`pubgrub::error::PubGrubError::NoSolution`] that displays a resolution failure report.
 #[derive(Debug)]
 pub struct NoSolutionError {
-    derivation_tree: DerivationTree<PubGrubPackage, Range<Version>>,
+    derivation_tree: DerivationTree<PubGrubPackage, Range<Version>, String>,
     available_versions: IndexMap<PubGrubPackage, BTreeSet<Version>>,
     selector: Option<CandidateSelector>,
     python_requirement: Option<PythonRequirement>,

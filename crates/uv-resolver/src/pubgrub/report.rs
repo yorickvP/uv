@@ -30,15 +30,18 @@ pub(crate) struct PubGrubReportFormatter<'a> {
     pub(crate) python_requirement: Option<&'a PythonRequirement>,
 }
 
-impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<'_> {
+impl ReportFormatter<PubGrubPackage, Range<Version>, String> for PubGrubReportFormatter<'_> {
     type Output = String;
 
-    fn format_external(&self, external: &External<PubGrubPackage, Range<Version>>) -> Self::Output {
+    fn format_external(
+        &self,
+        external: &External<PubGrubPackage, Range<Version>, String>,
+    ) -> Self::Output {
         match external {
             External::NotRoot(package, version) => {
                 format!("we are solving dependencies of {package} {version}")
             }
-            External::NoVersions(package, set, reason) => {
+            External::NoVersions(package, set) => {
                 if matches!(package, PubGrubPackage::Python(_)) {
                     if let Some(python) = self.python_requirement {
                         if python.target() == python.installed() {
@@ -79,16 +82,6 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
                 }
                 let set = self.simplify_set(set, package);
 
-                // Check for a reason
-                if let Some(reason) = reason {
-                    let formatted = if set.as_ref() == &Range::full() {
-                        format!("{package} {reason}")
-                    } else {
-                        format!("{package}{set} {reason}")
-                    };
-                    return formatted;
-                }
-
                 if set.as_ref() == &Range::full() {
                     format!("there are no versions of {package}")
                 } else if set.as_singleton().is_some() {
@@ -112,17 +105,19 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
                     }
                 }
             }
-            External::Unavailable(package, set, reason) => match package {
+            External::Custom(package, set, reason) => match package {
                 PubGrubPackage::Root(Some(name)) => {
                     format!("{name} cannot be used because {reason}")
                 }
                 PubGrubPackage::Root(None) => {
                     format!("your requirements cannot be used because {reason}")
                 }
-                _ => format!(
-                    "{}is unusable because {reason}",
-                    Padded::new("", &PackageRange::compatibility(package, set), " ")
-                ),
+                _ => {
+                    format!(
+                        "{}{reason}",
+                        Padded::new("", &PackageRange::compatibility(package, set), " ")
+                    )
+                }
             },
             External::FromDependencyOf(package, package_set, dependency, dependency_set) => {
                 let package_set = self.simplify_set(package_set, package);
@@ -198,8 +193,8 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     /// Simplest case, we just combine two external incompatibilities.
     fn explain_both_external(
         &self,
-        external1: &External<PubGrubPackage, Range<Version>>,
-        external2: &External<PubGrubPackage, Range<Version>>,
+        external1: &External<PubGrubPackage, Range<Version>, String>,
+        external2: &External<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         let external1 = self.format_external(external1);
@@ -218,9 +213,9 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     fn explain_both_ref(
         &self,
         ref_id1: usize,
-        derived1: &Derived<PubGrubPackage, Range<Version>>,
+        derived1: &Derived<PubGrubPackage, Range<Version>, String>,
         ref_id2: usize,
-        derived2: &Derived<PubGrubPackage, Range<Version>>,
+        derived2: &Derived<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         // TODO: order should be chosen to make it more logical.
@@ -245,8 +240,8 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     fn explain_ref_and_external(
         &self,
         ref_id: usize,
-        derived: &Derived<PubGrubPackage, Range<Version>>,
-        external: &External<PubGrubPackage, Range<Version>>,
+        derived: &Derived<PubGrubPackage, Range<Version>, String>,
+        external: &External<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         // TODO: order should be chosen to make it more logical.
@@ -267,7 +262,7 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     /// Add an external cause to the chain of explanations.
     fn and_explain_external(
         &self,
-        external: &External<PubGrubPackage, Range<Version>>,
+        external: &External<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         let external = self.format_external(external);
@@ -284,7 +279,7 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     fn and_explain_ref(
         &self,
         ref_id: usize,
-        derived: &Derived<PubGrubPackage, Range<Version>>,
+        derived: &Derived<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         let derived = self.format_terms(&derived.terms);
@@ -301,8 +296,8 @@ impl ReportFormatter<PubGrubPackage, Range<Version>> for PubGrubReportFormatter<
     /// Add an already explained incompat to the chain of explanations.
     fn and_explain_prior_and_external(
         &self,
-        prior_external: &External<PubGrubPackage, Range<Version>>,
-        external: &External<PubGrubPackage, Range<Version>>,
+        prior_external: &External<PubGrubPackage, Range<Version>, String>,
+        external: &External<PubGrubPackage, Range<Version>, String>,
         current_terms: &Map<PubGrubPackage, Term<Range<Version>>>,
     ) -> String {
         let prior_external = self.format_external(prior_external);
@@ -338,7 +333,7 @@ impl PubGrubReportFormatter<'_> {
     /// their requirements.
     pub(crate) fn hints(
         &self,
-        derivation_tree: &DerivationTree<PubGrubPackage, Range<Version>>,
+        derivation_tree: &DerivationTree<PubGrubPackage, Range<Version>, String>,
         selector: &Option<CandidateSelector>,
         index_locations: &Option<IndexLocations>,
         unavailable_packages: &FxHashMap<PackageName, UnavailablePackage>,
@@ -355,7 +350,7 @@ impl PubGrubReportFormatter<'_> {
         let mut hints = IndexSet::default();
         match derivation_tree {
             DerivationTree::External(external) => match external {
-                External::Unavailable(package, set, _) | External::NoVersions(package, set, _) => {
+                External::Custom(package, set, _) | External::NoVersions(package, set) => {
                     // Check for no versions due to pre-release options
                     if let Some(selector) = selector {
                         let any_prerelease = set.iter().any(|(start, end)| {
@@ -716,21 +711,6 @@ struct PackageRange<'a> {
     kind: PackageRangeKind,
 }
 
-impl PackageRange<'_> {
-    /// Returns a boolean indicating if the predicate following this package range should
-    /// be singular or plural e.g. if false use "<range> depends on <...>" and
-    /// if true use "<range> depend on <...>"
-    fn plural(&self) -> bool {
-        if self.range.is_empty() {
-            false
-        } else {
-            let segments: Vec<_> = self.range.iter().collect();
-            // "all versions of" is the only plural case
-            matches!(segments.as_slice(), [(Bound::Unbounded, Bound::Unbounded)])
-        }
-    }
-}
-
 impl std::fmt::Display for PackageRange<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.range.is_empty() {
@@ -750,11 +730,7 @@ impl std::fmt::Display for PackageRange<'_> {
                     write!(f, "\n    ")?;
                 }
                 match segment {
-                    (Bound::Unbounded, Bound::Unbounded) => match self.kind {
-                        PackageRangeKind::Dependency => write!(f, "{package}")?,
-                        PackageRangeKind::Compatibility => write!(f, "all versions of {package}")?,
-                        PackageRangeKind::Available => write!(f, "{package}")?,
-                    },
+                    (Bound::Unbounded, Bound::Unbounded) => write!(f, "{package}")?,
                     (Bound::Unbounded, Bound::Included(v)) => write!(f, "{package}<={v}")?,
                     (Bound::Unbounded, Bound::Excluded(v)) => write!(f, "{package}<{v}")?,
                     (Bound::Included(v), Bound::Unbounded) => write!(f, "{package}>={v}")?,
@@ -827,14 +803,12 @@ struct DependsOn<'a> {
 
 impl std::fmt::Display for DependsOn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", Padded::new("", self.first, " "))?;
-        if self.first.plural() {
-            write!(f, "depend on ")?;
-        } else {
-            write!(f, "depends on ")?;
-        };
-        write!(f, "{}", self.second)?;
-        Ok(())
+        write!(
+            f,
+            "{}depends on {}",
+            Padded::new("", self.first, " "),
+            self.second
+        )
     }
 }
 

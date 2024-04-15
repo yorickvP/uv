@@ -362,7 +362,7 @@ fn incompatible_python_compatible_override_other_wheel() -> Result<()> {
                        we can conclude that package-a<2.0.0 cannot be used. (1)
 
                        Because the requested Python version (3.11) does not satisfy Python>=3.12 and package-a==2.0.0 depends on Python>=3.12, we can conclude that package-a==2.0.0 cannot be used.
-                       And because we know from (1) that package-a<2.0.0 cannot be used, we can conclude that all versions of package-a cannot be used.
+                       And because we know from (1) that package-a<2.0.0 cannot be used, we can conclude that package-a cannot be used.
                        And because you require package-a, we can conclude that the requirements are unsatisfiable.
                  "###
     );

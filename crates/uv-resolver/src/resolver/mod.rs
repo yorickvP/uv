@@ -363,38 +363,37 @@ impl<
                         .term_intersection_for_package(&next)
                         .expect("a package was chosen but we don't have a term.");
 
-                    let reason = {
-                        if let PubGrubPackage::Package(ref package_name, _, _) = next {
-                            // Check if the decision was due to the package being unavailable
-                            self.unavailable_packages
-                                .get(package_name)
-                                .map(|entry| match *entry {
-                                    UnavailablePackage::NoIndex => {
-                                        "was not found in the provided package locations"
-                                    }
-                                    UnavailablePackage::Offline => "was not found in the cache",
-                                    UnavailablePackage::NotFound => {
-                                        "was not found in the package registry"
-                                    }
-                                    UnavailablePackage::InvalidMetadata(_) => {
-                                        "was found, but the metadata could not be parsed"
-                                    }
-                                    UnavailablePackage::InvalidStructure(_) => {
-                                        "was found, but has an invalid format"
-                                    }
-                                })
-                        } else {
-                            None
+                    // Check if the decision was due to the package being unavailable
+                    if let PubGrubPackage::Package(ref package_name, _, _) = next {
+                        // TODO(konstin): We should attach the unavailability to the versions we
+                        // rejected in `choose_version` due to it, not generically per package.
+                        if let Some(entry) = self.unavailable_packages.get(package_name) {
+                            let reason = match *entry {
+                                UnavailablePackage::NoIndex => {
+                                    "was not found in the provided package locations"
+                                }
+                                UnavailablePackage::Offline => "was not found in the cache",
+                                UnavailablePackage::NotFound => {
+                                    "was not found in the package registry"
+                                }
+                                UnavailablePackage::InvalidMetadata(_) => "has invalid metadata",
+                                UnavailablePackage::InvalidStructure(_) => {
+                                    "has an invalid package format"
+                                }
+                            };
+                            state.add_incompatibility(Incompatibility::custom_term(
+                                next.clone(),
+                                term_intersection.clone(),
+                                reason.to_string(),
+                            ));
+                            continue;
                         }
-                    };
+                    }
 
-                    let inc = Incompatibility::no_versions(
+                    state.add_incompatibility(Incompatibility::no_versions(
                         next.clone(),
                         term_intersection.clone(),
-                        reason.map(ToString::to_string),
-                    );
-
-                    state.add_incompatibility(inc);
+                    ));
                     continue;
                 }
                 Some(version) => version,
@@ -436,7 +435,7 @@ impl<
                             incompatibility.to_string()
                         }
                     };
-                    state.add_incompatibility(Incompatibility::unavailable(
+                    state.add_incompatibility(Incompatibility::custom_version(
                         next.clone(),
                         version.clone(),
                         reason,
@@ -470,7 +469,7 @@ impl<
                     .await?
                 {
                     Dependencies::Unavailable(reason) => {
-                        state.add_incompatibility(Incompatibility::unavailable(
+                        state.add_incompatibility(Incompatibility::custom_version(
                             package.clone(),
                             version.clone(),
                             reason.clone(),
@@ -964,7 +963,7 @@ impl<
                             .or_default()
                             .insert(version.clone(), IncompletePackage::Offline);
                         return Ok(Dependencies::Unavailable(
-                            "network connectivity is disabled, but the metadata wasn't found in the cache"
+                            "has metadata that was not found in the cache, but network connectivity is disabled"
                                 .to_string(),
                         ));
                     }
@@ -978,7 +977,7 @@ impl<
                                 IncompletePackage::InvalidMetadata(err.to_string()),
                             );
                         return Ok(Dependencies::Unavailable(
-                            "the package metadata could not be parsed".to_string(),
+                            "has invalid metadata".to_string(),
                         ));
                     }
                     MetadataResponse::InconsistentMetadata(err) => {
@@ -991,7 +990,7 @@ impl<
                                 IncompletePackage::InconsistentMetadata(err.to_string()),
                             );
                         return Ok(Dependencies::Unavailable(
-                            "the package metadata was inconsistent".to_string(),
+                            "has inconsistent metadata".to_string(),
                         ));
                     }
                     MetadataResponse::InvalidStructure(err) => {
@@ -1004,7 +1003,7 @@ impl<
                                 IncompletePackage::InvalidStructure(err.to_string()),
                             );
                         return Ok(Dependencies::Unavailable(
-                            "the package has an invalid format".to_string(),
+                            "has an invalid package format".to_string(),
                         ));
                     }
                 };
