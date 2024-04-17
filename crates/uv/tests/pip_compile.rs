@@ -3901,7 +3901,6 @@ fn find_links_requirements_txt() -> Result<()> {
     Ok(())
 }
 
-
 /// `extras==0.0.2` fails to build (i.e., it always throws). Since `extras==0.0.1` is pinned, we
 /// should never even attempt to build `extras==0.0.2`, despite an unpinned `extras[dev]`
 /// requirement.
