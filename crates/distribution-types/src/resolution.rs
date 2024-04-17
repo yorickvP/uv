@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use pep508_rs::Requirement;
+use pep508_rs::{Requirement, UvRequirement};
 use uv_normalize::PackageName;
 
 use crate::{BuiltDist, Dist, InstalledDist, Name, ResolvedDist, SourceDist};
@@ -56,15 +56,15 @@ impl Resolution {
         self.0.is_empty()
     }
 
-    /// Return the set of [`Requirement`]s that this resolution represents, exclusive of any
+    /// Return the set of [`UvRequirement`]s that this resolution represents, exclusive of any
     /// editable requirements.
-    pub fn requirements(&self) -> Vec<Requirement> {
+    pub fn requirements(&self) -> Vec<UvRequirement> {
         let mut requirements = self
             .0
             .values()
             // Remove editable requirements
             .filter(|dist| !dist.is_editable())
-            .map(|dist| Requirement::from(dist.clone()))
+            .map(|dist| UvRequirement::from_requirement(Requirement::from(dist.clone())))
             .collect::<Vec<_>>();
         requirements.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         requirements

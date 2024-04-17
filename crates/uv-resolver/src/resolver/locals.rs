@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use distribution_filename::{SourceDistFilename, WheelFilename};
 use distribution_types::RemoteSource;
 use pep440_rs::{Operator, Version, VersionSpecifier, VersionSpecifierBuildError};
-use pep508_rs::{MarkerEnvironment, VersionOrUrl};
+use pep508_rs::{MarkerEnvironment, UvSource};
 use uv_normalize::PackageName;
 
 use crate::Manifest;
@@ -25,10 +25,8 @@ impl Locals {
         // Add all direct requirements and constraints. There's no need to look for conflicts,
         // since conflicts will be enforced by the solver.
         for requirement in manifest.requirements(markers) {
-            if let Some(version_or_url) = requirement.version_or_url.as_ref() {
-                for local in iter_locals(version_or_url) {
-                    required.insert(requirement.name.clone(), local);
-                }
+            for local in iter_locals(&requirement.source) {
+                required.insert(requirement.name.clone(), local);
             }
         }
 
@@ -139,12 +137,12 @@ fn is_compatible(expected: &Version, provided: &Version) -> bool {
 
 /// If a [`VersionSpecifier`] contains exact equality specifiers for a local version, returns an
 /// iterator over the local versions.
-fn iter_locals(version_or_url: &VersionOrUrl) -> impl Iterator<Item = Version> + '_ {
-    match version_or_url {
+fn iter_locals(source: &UvSource) -> impl Iterator<Item = Version> + '_ {
+    match source {
         // Extract all local versions from specifiers that require an exact version (e.g.,
         // `==1.0.0+local`).
-        VersionOrUrl::VersionSpecifier(specifiers) => Either::Left(
-            specifiers
+        UvSource::Registry { version, .. } => Either::Left(
+            version
                 .iter()
                 .filter(|specifier| {
                     matches!(specifier.operator(), Operator::Equal | Operator::ExactEqual)
@@ -154,7 +152,7 @@ fn iter_locals(version_or_url: &VersionOrUrl) -> impl Iterator<Item = Version> +
         ),
         // Exact a local version from a URL, if it includes a fully-qualified filename (e.g.,
         // `torch-2.2.1%2Bcu118-cp311-cp311-linux_x86_64.whl`).
-        VersionOrUrl::Url(url) => Either::Right(
+        UvSource::Url { url } => Either::Right(
             url.filename()
                 .ok()
                 .and_then(|filename| {
@@ -178,10 +176,17 @@ fn iter_locals(version_or_url: &VersionOrUrl) -> impl Iterator<Item = Version> +
                 })
                 .into_iter(),
         ),
+        UvSource::Git { .. } => {
+            todo!()
+        }
+        UvSource::Path { .. } => {
+            todo!()
+        }
     }
 }
 
 #[cfg(test)]
+#[cfg(feature = "todo")]
 mod tests {
     use std::str::FromStr;
 

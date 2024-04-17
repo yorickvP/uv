@@ -6,7 +6,8 @@ use owo_colors::OwoColorize;
 use tracing::debug;
 
 use distribution_types::{InstalledMetadata, Name};
-use pep508_rs::{Requirement, RequirementsTxtRequirement, UnnamedRequirement};
+use pep508_rs::{UnnamedRequirement, UvRequirement};
+use requirements_txt::RequirementsTxtRequirement;
 use uv_cache::Cache;
 use uv_client::{BaseClientBuilder, Connectivity};
 use uv_configuration::KeyringProviderType;
@@ -79,11 +80,11 @@ pub(crate) async fn pip_uninstall(
     let site_packages = uv_installer::SitePackages::from_executable(&venv)?;
 
     // Partition the requirements into named and unnamed requirements.
-    let (named, unnamed): (Vec<Requirement>, Vec<UnnamedRequirement>) = spec
+    let (named, unnamed): (Vec<UvRequirement>, Vec<UnnamedRequirement>) = spec
         .requirements
         .into_iter()
         .partition_map(|entry| match entry.requirement {
-            RequirementsTxtRequirement::Pep508(requirement) => Either::Left(requirement),
+            RequirementsTxtRequirement::Uv(requirement) => Either::Left(requirement),
             RequirementsTxtRequirement::Unnamed(requirement) => Either::Right(requirement),
         });
 

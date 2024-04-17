@@ -4,8 +4,9 @@ use rustc_hash::FxHashMap;
 use url::Url;
 
 use distribution_types::{DistributionMetadata, HashPolicy, PackageId};
-use pep508_rs::{MarkerEnvironment, RequirementsTxtRequirement, VersionOrUrl};
+use pep508_rs::{MarkerEnvironment, UvSource};
 use pypi_types::{HashDigest, HashError};
+use requirements_txt::RequirementsTxtRequirement;
 use uv_normalize::PackageName;
 
 #[derive(Debug, Clone)]
@@ -96,33 +97,34 @@ impl HashStrategy {
 
             // Every requirement must be either a pinned version or a direct URL.
             let id = match &requirement {
-                RequirementsTxtRequirement::Pep508(requirement) => {
-                    match requirement.version_or_url.as_ref() {
-                        Some(VersionOrUrl::Url(url)) => {
-                            // Direct URLs are always allowed.
-                            PackageId::from_url(url)
-                        }
-                        Some(VersionOrUrl::VersionSpecifier(specifiers)) => {
+                RequirementsTxtRequirement::Uv(requirement) => {
+                    match &requirement.source {
+                        UvSource::Registry { version, .. } => {
                             // Must be a single specifier.
-                            let [specifier] = specifiers.as_ref() else {
+                            let [specifier] = version.as_ref() else {
                                 return Err(HashStrategyError::UnpinnedRequirement(
-                                    requirement.to_string(),
+                                    requirement.name.to_string(),
                                 ));
                             };
 
                             // Must be pinned to a specific version.
                             if *specifier.operator() != pep440_rs::Operator::Equal {
                                 return Err(HashStrategyError::UnpinnedRequirement(
-                                    requirement.to_string(),
+                                    requirement.name.to_string(),
                                 ));
                             }
 
                             PackageId::from_registry(requirement.name.clone())
                         }
-                        None => {
-                            return Err(HashStrategyError::UnpinnedRequirement(
-                                requirement.to_string(),
-                            ))
+                        UvSource::Url { url } => {
+                            // Direct URLs are always allowed.
+                            PackageId::from_url(url)
+                        }
+                        UvSource::Git { .. } => {
+                            todo!()
+                        }
+                        UvSource::Path { .. } => {
+                            todo!()
                         }
                     }
                 }
@@ -134,7 +136,7 @@ impl HashStrategy {
 
             // Every requirement must include a hash.
             if digests.is_empty() {
-                return Err(HashStrategyError::MissingHashes(requirement.to_string()));
+                return Err(HashStrategyError::MissingHashes(requirement.name_or_url()));
             }
 
             // Parse the hashes.

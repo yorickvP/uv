@@ -13,6 +13,7 @@ license.workspace = true
 cache-key = { workspace = true }
 distribution-filename = { workspace = true }
 distribution-types = { workspace = true }
+pep440_rs = { workspace = true }
 pep508_rs = { workspace = true }
 pypi-types = { workspace = true }
 requirements-txt = { workspace = true, features = ["reqwest"] }
@@ -31,6 +32,7 @@ console = { workspace = true }
 ctrlc = { workspace = true }
 fs-err = { workspace = true, features = ["tokio"] }
 futures = { workspace = true }
+glob = { workspace = true }
 indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }

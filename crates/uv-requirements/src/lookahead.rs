@@ -6,7 +6,7 @@ use futures::StreamExt;
 use rustc_hash::FxHashSet;
 
 use distribution_types::{Dist, DistributionMetadata, LocalEditable};
-use pep508_rs::{MarkerEnvironment, Requirement, VersionOrUrl};
+use pep508_rs::{MarkerEnvironment, UvRequirement, UvRequirements, UvSource};
 use pypi_types::Metadata23;
 use uv_client::RegistryClient;
 use uv_configuration::{Constraints, Overrides};
@@ -32,13 +32,13 @@ use uv_types::{BuildContext, HashStrategy, RequestedRequirements};
 /// require a range of versions and backtracking).
 pub struct LookaheadResolver<'a, Context: BuildContext + Send + Sync> {
     /// The direct requirements for the project.
-    requirements: &'a [Requirement],
+    requirements: &'a [UvRequirement],
     /// The constraints for the project.
     constraints: &'a Constraints,
     /// The overrides for the project.
     overrides: &'a Overrides,
     /// The editable requirements for the project.
-    editables: &'a [(LocalEditable, Metadata23)],
+    editables: &'a [(LocalEditable, Metadata23, UvRequirements)],
     /// The required hashes for the project.
     hasher: &'a HashStrategy,
     /// The in-memory index for resolving dependencies.
@@ -51,10 +51,10 @@ impl<'a, Context: BuildContext + Send + Sync> LookaheadResolver<'a, Context> {
     /// Instantiate a new [`LookaheadResolver`] for a given set of requirements.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        requirements: &'a [Requirement],
+        requirements: &'a [UvRequirement],
         constraints: &'a Constraints,
         overrides: &'a Overrides,
-        editables: &'a [(LocalEditable, Metadata23)],
+        editables: &'a [(LocalEditable, Metadata23, UvRequirements)],
         hasher: &'a HashStrategy,
         context: &'a Context,
         client: &'a RegistryClient,
@@ -87,21 +87,28 @@ impl<'a, Context: BuildContext + Send + Sync> LookaheadResolver<'a, Context> {
         let mut seen = FxHashSet::default();
 
         // Queue up the initial requirements.
-        let mut queue: VecDeque<Requirement> = self
+        let mut queue: VecDeque<_> = self
             .constraints
             .apply(self.overrides.apply(self.requirements))
             .filter(|requirement| requirement.evaluate_markers(markers, &[]))
-            .chain(self.editables.iter().flat_map(|(editable, metadata)| {
-                self.constraints
-                    .apply(self.overrides.apply(&metadata.requires_dist))
-                    .filter(|requirement| requirement.evaluate_markers(markers, &editable.extras))
-            }))
+            .chain(
+                self.editables
+                    .iter()
+                    .flat_map(|(editable, _metadata, requirements)| {
+                        self.constraints
+                            .apply(self.overrides.apply(&requirements.dependencies))
+                            .filter(|requirement| {
+                                requirement.evaluate_markers(markers, &editable.extras)
+                            })
+                    }),
+            )
             .cloned()
             .collect();
 
         while !queue.is_empty() || !futures.is_empty() {
             while let Some(requirement) = queue.pop_front() {
-                if matches!(requirement.version_or_url, Some(VersionOrUrl::Url(_))) {
+                // TODO(konsti): Git and path too
+                if let UvSource::Url { .. } = requirement.source {
                     if seen.insert(requirement.clone()) {
                         futures.push(self.lookahead(requirement));
                     }
@@ -127,9 +134,10 @@ impl<'a, Context: BuildContext + Send + Sync> LookaheadResolver<'a, Context> {
     }
 
     /// Infer the package name for a given "unnamed" requirement.
-    async fn lookahead(&self, requirement: Requirement) -> Result<Option<RequestedRequirements>> {
+    async fn lookahead(&self, requirement: UvRequirement) -> Result<Option<RequestedRequirements>> {
         // Determine whether the requirement represents a local distribution.
-        let Some(VersionOrUrl::Url(url)) = requirement.version_or_url.as_ref() else {
+        // TODO(konsti): Git and path too
+        let UvSource::Url { url } = requirement.source else {
             return Ok(None);
         };
 
@@ -152,7 +160,13 @@ impl<'a, Context: BuildContext + Send + Sync> LookaheadResolver<'a, Context> {
                 })
             {
                 // If the metadata is already in the index, return it.
-                archive.metadata.requires_dist.clone()
+                archive
+                    .metadata
+                    .requires_dist
+                    .iter()
+                    .cloned()
+                    .map(UvRequirement::from_requirement)
+                    .collect()
             } else {
                 // Run the PEP 517 build process to extract metadata from the source distribution.
                 let archive = self
@@ -171,6 +185,9 @@ impl<'a, Context: BuildContext + Send + Sync> LookaheadResolver<'a, Context> {
                     .insert_metadata(id, MetadataResponse::Found(archive));
 
                 requires_dist
+                    .into_iter()
+                    .map(UvRequirement::from_requirement)
+                    .collect()
             }
         };
 

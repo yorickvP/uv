@@ -10,7 +10,7 @@ use distribution_types::{
     BuiltDist, CachedDirectUrlDist, CachedDist, Dist, IndexLocations, InstalledDist,
     InstalledMetadata, InstalledVersion, Name, SourceDist,
 };
-use pep508_rs::{Requirement, VersionOrUrl};
+use pep508_rs::{UvRequirement, UvSource};
 use platform_tags::Tags;
 use uv_cache::{ArchiveTarget, ArchiveTimestamp, Cache, CacheBucket, WheelCache};
 use uv_configuration::{NoBinary, Reinstall};
@@ -26,14 +26,14 @@ use crate::{ResolvedEditable, SitePackages};
 /// A planner to generate an [`Plan`] based on a set of requirements.
 #[derive(Debug)]
 pub struct Planner<'a> {
-    requirements: &'a [Requirement],
+    requirements: &'a [UvRequirement],
     editable_requirements: &'a [ResolvedEditable],
 }
 
 impl<'a> Planner<'a> {
     /// Set the requirements use in the [`Plan`].
     #[must_use]
-    pub fn with_requirements(requirements: &'a [Requirement]) -> Self {
+    pub fn with_requirements(requirements: &'a [UvRequirement]) -> Self {
         Self {
             requirements,
             editable_requirements: &[],
@@ -143,7 +143,7 @@ impl<'a> Planner<'a> {
             }
 
             // If we see the same requirement twice, then we have a conflict.
-            let specifier = Specifier::NonEditable(requirement.version_or_url.as_ref());
+            let specifier = Specifier::NonEditable(&requirement.source);
             match seen.entry(requirement.name.clone()) {
                 Entry::Occupied(value) => {
                     if value.get() == &specifier {
@@ -197,33 +197,24 @@ impl<'a> Planner<'a> {
             }
 
             if cache.must_revalidate(&requirement.name) {
-                debug!("Must revalidate requirement: {requirement}");
+                debug!("Must revalidate requirement: {}", requirement.name);
                 remote.push(requirement.clone());
                 continue;
             }
 
             // Identify any cached distributions that satisfy the requirement.
-            match requirement.version_or_url.as_ref() {
-                None => {
-                    if let Some((_version, distribution)) =
-                        registry_index.get(&requirement.name).next()
-                    {
-                        debug!("Requirement already cached: {distribution}");
-                        cached.push(CachedDist::Registry(distribution.clone()));
-                        continue;
-                    }
-                }
-                Some(VersionOrUrl::VersionSpecifier(specifier)) => {
+            match &requirement.source {
+                UvSource::Registry { version, .. } => {
                     if let Some((_version, distribution)) = registry_index
                         .get(&requirement.name)
-                        .find(|(version, _)| specifier.contains(version))
+                        .find(|(version_, _)| version.contains(version_))
                     {
                         debug!("Requirement already cached: {distribution}");
                         cached.push(CachedDist::Registry(distribution.clone()));
                         continue;
                     }
                 }
-                Some(VersionOrUrl::Url(url)) => {
+                UvSource::Url { url } => {
                     match Dist::from_url(requirement.name.clone(), url.clone())? {
                         Dist::Built(BuiltDist::Registry(_)) => {
                             // Nothing to do.
@@ -349,6 +340,9 @@ impl<'a> Planner<'a> {
                         }
                     }
                 }
+
+                UvSource::Git { .. } => todo!(),
+                UvSource::Path { .. } => todo!(),
             }
 
             debug!("Identified uncached requirement: {requirement}");
@@ -391,7 +385,7 @@ enum Specifier<'a> {
     /// An editable requirement, marked by the installed version of the package.
     Editable(InstalledVersion<'a>),
     /// A non-editable requirement, marked by the version or URL specifier.
-    NonEditable(Option<&'a VersionOrUrl>),
+    NonEditable(&'a UvSource),
 }
 
 #[derive(Debug, Default)]
@@ -406,7 +400,7 @@ pub struct Plan {
 
     /// The distributions that are not already installed in the current environment, and are
     /// not available in the local cache.
-    pub remote: Vec<Requirement>,
+    pub remote: Vec<UvRequirement>,
 
     /// Any distributions that are already installed in the current environment, but will be
     /// re-installed (including upgraded) to satisfy the requirements.
@@ -422,23 +416,18 @@ pub struct Plan {
 /// Returns an error if IO fails during a freshness check for a local path.
 fn installed_satisfies_requirement(
     distribution: &InstalledDist,
-    requirement: &Requirement,
+    requirement: &UvRequirement,
 ) -> Result<bool> {
     // Filter out already-installed packages.
-    match requirement.version_or_url.as_ref() {
-        // Accept any version of the package.
-        None => return Ok(true),
-
+    match &requirement.source {
         // If the requirement comes from a registry, check by name.
-        Some(VersionOrUrl::VersionSpecifier(version_specifier)) => {
-            if version_specifier.contains(distribution.version()) {
+        UvSource::Registry { version, .. } => {
+            if version.contains(distribution.version()) {
                 debug!("Requirement already satisfied: {distribution}");
                 return Ok(true);
             }
         }
-
-        // If the requirement comes from a direct URL, check by URL.
-        Some(VersionOrUrl::Url(url)) => {
+        UvSource::Url { url } => {
             if let InstalledDist::Url(installed) = &distribution {
                 if &installed.url == url.raw() {
                     // If the requirement came from a local path, check freshness.
@@ -458,6 +447,12 @@ fn installed_satisfies_requirement(
                     }
                 }
             }
+        }
+        UvSource::Git { .. } => {
+            todo!()
+        }
+        UvSource::Path { .. } => {
+            todo!()
         }
     }
 

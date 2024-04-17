@@ -6,7 +6,7 @@ use futures::{StreamExt, TryStreamExt};
 use url::Url;
 
 use distribution_types::{BuildableSource, HashPolicy, PathSourceUrl, SourceUrl, VersionId};
-use pep508_rs::Requirement;
+use pep508_rs::{Requirement, UvRequirement};
 use uv_client::RegistryClient;
 use uv_distribution::{DistributionDatabase, Reporter};
 use uv_fs::Simplified;
@@ -61,13 +61,17 @@ impl<'a, Context: BuildContext + Send + Sync> SourceTreeResolver<'a, Context> {
     }
 
     /// Resolve the requirements from the provided source trees.
-    pub async fn resolve(self) -> Result<Vec<Requirement>> {
+    pub async fn resolve(self) -> Result<Vec<UvRequirement>> {
         let requirements: Vec<_> = futures::stream::iter(self.source_trees.iter())
             .map(|source_tree| async { self.resolve_source_tree(source_tree).await })
             .buffered(50)
             .try_collect()
             .await?;
-        Ok(requirements.into_iter().flatten().collect())
+        Ok(requirements
+            .into_iter()
+            .flatten()
+            .map(UvRequirement::from_requirement)
+            .collect())
     }
 
     /// Infer the package name for a given "unnamed" requirement.

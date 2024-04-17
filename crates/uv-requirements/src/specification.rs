@@ -1,19 +1,22 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use rustc_hash::FxHashSet;
-use tracing::{instrument, Level};
+use tracing::{debug, instrument};
 
 use cache_key::CanonicalUrl;
 use distribution_types::{FlatIndexLocation, IndexUrl};
-use pep508_rs::{Requirement, RequirementsTxtRequirement};
+use pep508_rs::UvRequirement;
+use requirements_txt::RequirementsTxtRequirement;
 use requirements_txt::{EditableRequirement, FindLink, RequirementEntry, RequirementsTxt};
 use uv_client::BaseClientBuilder;
 use uv_configuration::{NoBinary, NoBuild};
 use uv_fs::Simplified;
 use uv_normalize::{ExtraName, PackageName};
+use uv_warnings::warn_user;
 
-use crate::pyproject::{Pep621Metadata, PyProjectToml};
+use crate::pyproject::{Pep621Error, PyProjectToml, UvMetadata};
 use crate::{ExtrasSpecification, RequirementsSource};
 
 #[derive(Debug, Default)]
@@ -23,7 +26,7 @@ pub struct RequirementsSpecification {
     /// The requirements for the project.
     pub requirements: Vec<RequirementEntry>,
     /// The constraints for the project.
-    pub constraints: Vec<Requirement>,
+    pub constraints: Vec<UvRequirement>,
     /// The overrides for the project.
     pub overrides: Vec<RequirementEntry>,
     /// Package to install as editable installs
@@ -48,7 +51,7 @@ pub struct RequirementsSpecification {
 
 impl RequirementsSpecification {
     /// Read the requirements and constraints from a source.
-    #[instrument(skip_all, level = Level::DEBUG, fields(source = % source))]
+    #[instrument(skip_all, level = tracing::Level::DEBUG, fields(source = % source))]
     pub async fn from_source(
         source: &RequirementsSource,
         extras: &ExtrasSpecification<'_>,
@@ -141,55 +144,61 @@ impl RequirementsSpecification {
                 // For example, Hatch's "Context formatting" API is not compliant with PEP 621, as
                 // it expects dynamic processing by the build backend for the static metadata
                 // fields. See: https://hatch.pypa.io/latest/config/context/
-                if let Some(project) = pyproject
-                    .project
-                    .and_then(|project| Pep621Metadata::try_from(project, extras).ok().flatten())
-                {
-                    Self {
+                match UvMetadata::try_from(
+                    pyproject,
+                    extras,
+                    &HashMap::default(),
+                    &HashMap::default(),
+                ) {
+                    Ok(Some(project)) => Self {
                         project: Some(project.name),
                         requirements: project
                             .requirements
                             .into_iter()
                             .map(|requirement| RequirementEntry {
-                                requirement: RequirementsTxtRequirement::Pep508(requirement),
+                                requirement: RequirementsTxtRequirement::Uv(requirement),
                                 hashes: vec![],
                             })
                             .collect(),
-                        constraints: vec![],
-                        overrides: vec![],
-                        editables: vec![],
-                        source_trees: vec![],
                         extras: project.used_extras,
-                        index_url: None,
-                        extra_index_urls: vec![],
-                        no_index: false,
-                        find_links: vec![],
-                        no_binary: NoBinary::default(),
-                        no_build: NoBuild::default(),
+                        ..Self::default()
+                    },
+                    Ok(None) => {
+                        debug!("Dynamic pyproject.toml at: `{}`", path.user_display());
+                        let path = fs_err::canonicalize(path)?;
+                        let source_tree = path.parent().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "The file `{}` appears to be a `pyproject.toml` file, which must be in a directory",
+                                path.user_display()
+                            )
+                        })?;
+                        Self {
+                            project: None,
+                            requirements: vec![],
+                            source_trees: vec![source_tree.to_path_buf()],
+                            ..Self::default()
+                        }
                     }
-                } else {
-                    let path = fs_err::canonicalize(path)?;
-                    let source_tree = path.parent().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "The file `{}` appears to be a `pyproject.toml` file, which must be in a directory",
+                    Err(Pep621Error::Pep508(err)) => {
+                        warn_user!(
+                            "Invalid pyproject.toml at {}, trying to extract metadata using PEP 518: {err}",
                             path.user_display()
-                        )
-                    })?;
-                    Self {
-                        project: None,
-                        requirements: vec![],
-                        constraints: vec![],
-                        overrides: vec![],
-                        editables: vec![],
-                        source_trees: vec![source_tree.to_path_buf()],
-                        extras: FxHashSet::default(),
-                        index_url: None,
-                        extra_index_urls: vec![],
-                        no_index: false,
-                        find_links: vec![],
-                        no_binary: NoBinary::default(),
-                        no_build: NoBuild::default(),
+                        );
+                        let path = fs_err::canonicalize(path)?;
+                        let source_tree = path.parent().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "The file `{}` appears to be a `pyproject.toml` file, which must be in a directory",
+                                path.user_display()
+                            )
+                        })?;
+                        Self {
+                            project: None,
+                            requirements: vec![],
+                            source_trees: vec![source_tree.to_path_buf()],
+                            ..Self::default()
+                        }
                     }
+                    Err(err) => return Err(err.into()),
                 }
             }
             RequirementsSource::SetupPy(path) | RequirementsSource::SetupCfg(path) => {
@@ -269,7 +278,7 @@ impl RequirementsSpecification {
             let source = Self::from_source(source, extras, client_builder).await?;
             for entry in source.requirements {
                 match entry.requirement {
-                    RequirementsTxtRequirement::Pep508(requirement) => {
+                    RequirementsTxtRequirement::Uv(requirement) => {
                         spec.constraints.push(requirement);
                     }
                     RequirementsTxtRequirement::Unnamed(requirement) => {

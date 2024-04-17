@@ -12,7 +12,7 @@ use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use distribution_types::IndexLocations;
 use pep440_rs::{Version, VersionSpecifier, VersionSpecifiers};
-use pep508_rs::{Requirement, VersionOrUrl};
+use pep508_rs::{Requirement, UvRequirement, VersionOrUrl};
 use uv_cache::{Cache, CacheArgs};
 use uv_client::{OwnedArchive, RegistryClient, RegistryClientBuilder};
 use uv_configuration::{ConfigSettings, NoBinary, NoBuild, SetupPyStrategy};
@@ -140,7 +140,9 @@ pub(crate) async fn resolve_many(args: ResolveManyArgs) -> Result<()> {
                     requirement
                 };
 
-                let result = build_dispatch.resolve(&[requirement.clone()]).await;
+                let result = build_dispatch
+                    .resolve(&[UvRequirement::from_requirement(requirement.clone())])
+                    .await;
                 (requirement.to_string(), start.elapsed(), result)
             }
         })

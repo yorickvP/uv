@@ -3,14 +3,13 @@ use std::path::PathBuf;
 
 use anstream::println;
 use anyhow::{Context, Result};
-
 use clap::{Parser, ValueEnum};
 use fs_err::File;
 use itertools::Itertools;
 use petgraph::dot::{Config as DotConfig, Dot};
 
 use distribution_types::{FlatIndexLocation, IndexLocations, IndexUrl, Resolution};
-use pep508_rs::Requirement;
+use pep508_rs::{Requirement, UvRequirement};
 use uv_cache::{Cache, CacheArgs};
 use uv_client::{FlatIndexClient, RegistryClientBuilder};
 use uv_configuration::{ConfigSettings, NoBinary, NoBuild, SetupPyStrategy};
@@ -101,7 +100,13 @@ pub(crate) async fn resolve_cli(args: ResolveCliArgs) -> Result<()> {
     // Copied from `BuildDispatch`
     let tags = venv.interpreter().tags()?;
     let resolver = Resolver::new(
-        Manifest::simple(args.requirements.clone()),
+        Manifest::simple(
+            args.requirements
+                .iter()
+                .cloned()
+                .map(UvRequirement::from_requirement)
+                .collect(),
+        ),
         Options::default(),
         venv.interpreter().markers(),
         venv.interpreter(),

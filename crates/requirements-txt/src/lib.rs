@@ -40,14 +40,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use unscanny::{Pattern, Scanner};
 use url::Url;
 
+pub use crate::requirement::RequirementsTxtRequirement;
 use pep508_rs::{
     expand_env_vars, split_scheme, strip_host, Extras, Pep508Error, Pep508ErrorSource, Requirement,
-    RequirementsTxtRequirement, Scheme, VerbatimUrl,
+    Scheme, UvRequirement, VerbatimUrl,
 };
 #[cfg(feature = "http")]
 use uv_client::BaseClient;
@@ -56,6 +58,8 @@ use uv_configuration::{NoBinary, NoBuild, PackageNameSpecifier};
 use uv_fs::{normalize_url_path, Simplified};
 use uv_normalize::ExtraName;
 use uv_warnings::warn_user;
+
+mod requirement;
 
 /// We emit one of those for each requirements.txt entry
 enum RequirementsTxtStatement {
@@ -293,7 +297,7 @@ impl Display for EditableRequirement {
 
 /// A [Requirement] with additional metadata from the requirements.txt, currently only hashes but in
 /// the future also editable an similar information
-#[derive(Debug, Deserialize, Clone, Eq, PartialEq, Hash, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RequirementEntry {
     /// The actual PEP 508 requirement
     pub requirement: RequirementsTxtRequirement,
@@ -301,7 +305,7 @@ pub struct RequirementEntry {
     pub hashes: Vec<String>,
 }
 
-impl Display for RequirementEntry {
+/*impl Display for RequirementEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.requirement)?;
         for hash in &self.hashes {
@@ -309,7 +313,7 @@ impl Display for RequirementEntry {
         }
         Ok(())
     }
-}
+}*/
 
 /// Parsed and flattened requirements.txt with requirements and constraints
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -317,7 +321,7 @@ pub struct RequirementsTxt {
     /// The actual requirements with the hashes.
     pub requirements: Vec<RequirementEntry>,
     /// Constraints included with `-c`.
-    pub constraints: Vec<Requirement>,
+    pub constraints: Vec<UvRequirement>,
     /// Editables with `-e`.
     pub editables: Vec<EditableRequirement>,
     /// The index URL, specified with `--index-url`.
@@ -483,7 +487,7 @@ impl RequirementsTxt {
                     // _requirements_, but we don't want to support that.
                     for entry in sub_constraints.requirements {
                         match entry.requirement {
-                            RequirementsTxtRequirement::Pep508(requirement) => {
+                            RequirementsTxtRequirement::Uv(requirement) => {
                                 data.constraints.push(requirement);
                             }
                             RequirementsTxtRequirement::Unnamed(_) => {
