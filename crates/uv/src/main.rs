@@ -586,6 +586,7 @@ async fn run() -> Result<ExitStatus> {
                 args.args,
                 requirements,
                 args.isolated,
+                args.no_workspace,
                 &cache,
                 printer,
             )

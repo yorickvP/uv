@@ -1356,6 +1356,11 @@ pub(crate) struct RunArgs {
     /// Run with the given packages installed.
     #[arg(long)]
     pub(crate) with: Vec<String>,
+
+    /// Run without the current workspace installed.
+    #[arg(long)]
+    pub(crate) no_workspace: bool,
+    // TODO(zanieb): Consider alternative names like `--no-project` or `--without-project`
 }
 
 #[derive(Args)]
