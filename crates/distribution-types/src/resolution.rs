@@ -7,12 +7,15 @@ use crate::{BuiltDist, Dist, InstalledDist, Name, ResolvedDist, SourceDist};
 
 /// A set of packages pinned at specific versions.
 #[derive(Debug, Default, Clone)]
-pub struct Resolution(FxHashMap<PackageName, ResolvedDist>);
+pub struct Resolution(
+    FxHashMap<PackageName, ResolvedDist>,
+    FxHashMap<PackageName, Vec<PackageName>>
+);
 
 impl Resolution {
     /// Create a new resolution from the given pinned packages.
-    pub fn new(packages: FxHashMap<PackageName, ResolvedDist>) -> Self {
-        Self(packages)
+    pub fn new(packages: FxHashMap<PackageName, ResolvedDist>, deps: FxHashMap<PackageName, Vec<PackageName>>) -> Self {
+        Self(packages, deps)
     }
 
     /// Return the distribution for the given package name, if it exists.
@@ -29,6 +32,10 @@ impl Resolution {
             },
             None => None,
         }
+    }
+
+    pub fn deps(&self, package_name: &PackageName) -> Option<&Vec<PackageName>> {
+        self.1.get(package_name)
     }
 
     /// Iterate over the [`PackageName`] entities in this resolution.

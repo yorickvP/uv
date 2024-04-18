@@ -82,10 +82,14 @@ pub enum FileLocation {
     Path(#[with(rkyv::with::AsString)] PathBuf),
 }
 
+fn resolve_url(base: &String, path: &String) -> String {
+    Url::parse(base).unwrap().join(path).unwrap().to_string()
+}
+
 impl Display for FileLocation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RelativeUrl(_base, url) => Display::fmt(&url, f),
+            Self::RelativeUrl(base, url) => Display::fmt(&resolve_url(base, url), f),
             Self::AbsoluteUrl(url) => Display::fmt(&url, f),
             Self::Path(path) => Display::fmt(&path.display(), f),
         }

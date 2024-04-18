@@ -769,6 +769,18 @@ impl From<ResolutionGraph> for distribution_types::Resolution {
                     )
                 })
                 .collect(),
+            graph
+                .petgraph
+                .node_indices()
+                .map(|node| {
+                    (
+                        graph.petgraph[node].name().clone(),
+                        graph.petgraph.edges(node).map(|e| {
+                            graph.petgraph[e.target()].name().clone()
+                        }).collect()
+                    )
+                })
+                .collect()
         )
     }
 }

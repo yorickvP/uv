@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use std::path::Path;
@@ -11,9 +12,10 @@ use tempfile::tempdir_in;
 use tracing::debug;
 
 use distribution_types::{
-    DistributionMetadata, IndexLocations, InstalledMetadata, LocalDist, LocalEditable,
-    LocalEditables, Name, Resolution,
+    DistributionMetadata, IndexLocations, InstalledMetadata, LocalDist, LocalEditable, LocalEditables, Name,
+    Resolution, BuiltDist, SourceDist, Dist,
 };
+use distribution_types::ResolvedDist::Installable;
 use install_wheel_rs::linker::LinkMode;
 use pep508_rs::{MarkerEnvironment, Requirement};
 use platform_tags::Tags;
@@ -50,6 +52,80 @@ use crate::commands::{compile_bytecode, elapsed, ChangeEvent, ChangeEventKind, E
 use crate::printer::Printer;
 
 use super::DryRunEvent;
+
+
+        // "sha256": "c7bb817eb974bba0ff3ea1ba0f24d55afb86d50e3d4fe98d6922dc69cf2ccff1",
+        // "type": "url",
+        // "url": "https://files.pythonhosted.org/packages/f7/fc/c55e5a2da345c9a24aa2e1e0f60eb2ca290b6a41be82da03a6d4baec4f99/accelerate-0.25.0-py3-none-any.whl",
+// "version": "0.25.0"
+#[derive(Debug, serde::Serialize)]
+struct NixSpec {
+    sources: BTreeMap<String, NixSource>,
+    targets: NixTargets
+}
+#[derive(Debug, serde::Serialize)]
+struct NixTargets {
+    default: BTreeMap<String, Vec<String>>
+}
+#[derive(Debug, serde::Serialize)]
+struct NixSource {
+    sha256: String,
+    #[serde(rename = "type")]
+    type_: String,
+    url: String,
+    version: String,
+}
+
+fn to_nix_specs(resolution: &Resolution) -> BTreeMap<String, NixSource> {
+    resolution
+        .packages()
+        .map(|pkg_name| {
+            let dist = resolution.get(pkg_name).unwrap();
+            (pkg_name.to_string(), match dist {
+                Installable(Dist::Built(BuiltDist::Registry(wheel))) => NixSource {
+                    url: wheel.file.url.to_string().split("#").next().unwrap().to_string(),
+                    sha256: wheel.file.hashes.first().map(|x| x.digest.to_string()).unwrap_or("no hash found".to_string()),
+                    version: wheel.filename.version.to_string(),
+                    type_: "url".to_string(),
+                },
+                Installable(Dist::Source(SourceDist::Registry(sdist))) => NixSource {
+                    url: sdist.file.url.to_string().split("#").next().unwrap().to_string(),
+                    sha256: sdist.file.hashes.first().expect("no hash found").digest.to_string(),
+                    version: sdist.filename.version.to_string(),
+                    type_: "url".to_string(),
+                },
+                Installable(Dist::Built(BuiltDist::DirectUrl(bdist))) => NixSource {
+                    url: bdist.url.to_string(),
+                    // todo
+                    sha256: "unknown".to_string(),
+                    version: bdist.filename.version.to_string(),
+                    type_: "url".to_string(),
+                },
+                _ => panic!("Only registry distributions are supported: {:?}", dist),
+            })
+        })
+        .collect()
+}
+
+fn to_deps(resolution: &Resolution) -> BTreeMap<String, Vec<String>> {
+    resolution
+        .packages()
+        .map(|pkg_name| {
+            let mut res: Vec<_> = resolution.deps(pkg_name).unwrap().iter().map(|d| d.to_string()).collect();
+            res.sort_unstable();
+            (pkg_name.to_string(), res)
+        })
+        .collect()
+}
+
+fn to_nix_spec(resolution: &Resolution) -> NixSpec {
+    NixSpec {
+        sources: to_nix_specs(resolution),
+        targets: NixTargets {
+            default: to_deps(resolution)
+        }
+    }
+}
 
 /// Install packages into the current environment.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
@@ -364,6 +440,10 @@ pub(crate) async fn pip_install(
         }
         Err(err) => return Err(err.into()),
     };
+    // print json to_nix_specs(resolution)
+    let nix_specs = to_nix_spec(&resolution);
+    let nix_specs_json = serde_json::to_string_pretty(&nix_specs).unwrap();
+    print!("{}", nix_specs_json);
 
     // Re-initialize the in-flight map.
     let in_flight = InFlight::default();
