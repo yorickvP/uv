@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
 
@@ -6,12 +7,16 @@ use anstream::eprint;
 use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 use owo_colors::OwoColorize;
+use petgraph::visit::EdgeRef;
 use tempfile::tempdir_in;
+use tokio::fs;
 use tracing::debug;
+use url::Url;
 
+use distribution_types::ResolvedDist::Installable;
 use distribution_types::{
-    DistributionMetadata, IndexLocations, InstalledMetadata, LocalDist, LocalEditable,
-    LocalEditables, Name, Resolution,
+    BuiltDist, Dist, DistributionMetadata, FileLocation, IndexLocations, InstalledMetadata,
+    LocalDist, LocalEditable, LocalEditables, Name, Resolution, SourceDist,
 };
 use install_wheel_rs::linker::LinkMode;
 use pep508_rs::{MarkerEnvironment, Requirement};
@@ -50,6 +55,109 @@ use crate::commands::{compile_bytecode, elapsed, ChangeEvent, ChangeEventKind, E
 use crate::printer::Printer;
 
 use super::DryRunEvent;
+
+#[derive(Debug, serde::Serialize)]
+struct NixSpec {
+    sources: BTreeMap<String, NixSource>,
+    targets: NixTargets,
+}
+#[derive(Debug, serde::Serialize)]
+struct NixTargets {
+    default: BTreeMap<PackageName, Vec<PackageName>>,
+}
+#[derive(Debug, serde::Serialize)]
+struct NixSource {
+    sha256: String,
+    #[serde(rename = "type")]
+    type_: String,
+    url: String,
+    version: String,
+}
+
+fn to_url(f: &FileLocation) -> String {
+    match f {
+        FileLocation::AbsoluteUrl(url) => url.to_string(),
+        FileLocation::RelativeUrl(base, url) => {
+            Url::parse(base).unwrap().join(url).unwrap().to_string()
+        }
+        FileLocation::Path(path) => Url::from_file_path(path).unwrap().to_string(),
+    }
+    .split('#')
+    .next()
+    .unwrap()
+    .to_string()
+}
+
+fn to_nix_specs(resolution: &Resolution) -> BTreeMap<String, NixSource> {
+    resolution
+        .packages()
+        .map(|pkg_name| {
+            let dist = resolution.get(pkg_name).unwrap();
+            (
+                pkg_name.to_string(),
+                match dist {
+                    Installable(Dist::Built(BuiltDist::Registry(wheel))) => NixSource {
+                        url: to_url(&wheel.file.url),
+                        sha256: wheel
+                            .file
+                            .hashes
+                            .first()
+                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
+                        version: wheel.filename.version.to_string(),
+                        type_: "url".to_string(),
+                    },
+                    Installable(Dist::Source(SourceDist::Registry(sdist))) => NixSource {
+                        url: to_url(&sdist.file.url),
+                        sha256: sdist
+                            .file
+                            .hashes
+                            .first()
+                            .expect("no hash found")
+                            .digest
+                            .to_string(),
+                        version: sdist.filename.version.to_string(),
+                        type_: "url".to_string(),
+                    },
+                    Installable(Dist::Built(BuiltDist::DirectUrl(bdist))) => NixSource {
+                        url: bdist.url.to_string(),
+                        // todo
+                        sha256: "unknown".to_string(),
+                        version: bdist.filename.version.to_string(),
+                        type_: "url".to_string(),
+                    },
+                    _ => panic!("Only registry distributions are supported: {dist:?}"),
+                },
+            )
+        })
+        .collect()
+}
+
+fn to_nix_spec(
+    resolution: &Resolution,
+    dependencies: BTreeMap<PackageName, Vec<PackageName>>,
+) -> NixSpec {
+    NixSpec {
+        sources: to_nix_specs(resolution),
+        targets: NixTargets {
+            default: dependencies,
+        },
+    }
+}
+
+fn scrape_dependencies(graph: &ResolutionGraph) -> BTreeMap<PackageName, Vec<PackageName>> {
+    let pg = graph.petgraph();
+    pg.node_indices()
+        .map(|node| {
+            (
+                pg[node].name().clone(),
+                pg.edges(node)
+                    .map(|e| pg[e.target()].name().clone())
+                    .sorted()
+                    .collect(),
+            )
+        })
+        .collect()
+}
 
 /// Install packages into the current environment.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
@@ -378,7 +486,7 @@ pub(crate) async fn pip_install(
         .build();
 
     // Resolve the requirements.
-    let resolution = match resolve(
+    let (dependency_graph, resolution) = match resolve(
         requirements,
         constraints,
         overrides,
@@ -400,7 +508,10 @@ pub(crate) async fn pip_install(
     )
     .await
     {
-        Ok(resolution) => Resolution::from(resolution),
+        Ok(resolution) => (
+            scrape_dependencies(&resolution),
+            Resolution::from(resolution),
+        ),
         Err(Error::Resolve(uv_resolver::ResolveError::NoSolution(err))) => {
             let report = miette::Report::msg(format!("{err}"))
                 .context("No solution found when resolving dependencies:");
@@ -409,6 +520,13 @@ pub(crate) async fn pip_install(
         }
         Err(err) => return Err(err.into()),
     };
+
+    if let Ok(dest) = std::env::var("UV_DUMP_DREAM2NIX") {
+        let nix_specs = to_nix_spec(&resolution, dependency_graph);
+        let nix_specs_json = serde_json::to_string_pretty(&nix_specs).unwrap();
+        eprint!("Note: Writing nix specs to {dest}\n");
+        fs::write(dest, nix_specs_json).await?;
+    }
 
     // Re-initialize the in-flight map.
     let in_flight = InFlight::default();
