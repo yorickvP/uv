@@ -1,3 +1,5 @@
+use pypi_types::HashDigest;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -88,7 +90,10 @@ fn to_url(f: &FileLocation) -> String {
     .to_string()
 }
 
-fn to_nix_specs(resolution: &Resolution) -> BTreeMap<String, NixSource> {
+fn to_nix_specs(
+    resolution: &Resolution,
+    hashes: &FxHashMap<PackageName, Vec<HashDigest>>,
+) -> BTreeMap<String, NixSource> {
     resolution
         .packages()
         .map(|pkg_name| {
@@ -112,16 +117,16 @@ fn to_nix_specs(resolution: &Resolution) -> BTreeMap<String, NixSource> {
                             .file
                             .hashes
                             .first()
-                            .expect("no hash found")
-                            .digest
-                            .to_string(),
+                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
                         version: sdist.filename.version.to_string(),
                         type_: "url".to_string(),
                     },
                     Installable(Dist::Built(BuiltDist::DirectUrl(bdist))) => NixSource {
                         url: bdist.url.to_string(),
-                        // todo
-                        sha256: "unknown".to_string(),
+                        sha256: hashes
+                            .get(pkg_name)
+                            .and_then(|x| x.first())
+                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
                         version: bdist.filename.version.to_string(),
                         type_: "url".to_string(),
                     },
@@ -134,10 +139,11 @@ fn to_nix_specs(resolution: &Resolution) -> BTreeMap<String, NixSource> {
 
 fn to_nix_spec(
     resolution: &Resolution,
+    hashes: &FxHashMap<PackageName, Vec<HashDigest>>,
     dependencies: BTreeMap<PackageName, Vec<PackageName>>,
 ) -> NixSpec {
     NixSpec {
-        sources: to_nix_specs(resolution),
+        sources: to_nix_specs(resolution, hashes),
         targets: NixTargets {
             default: dependencies,
         },
@@ -348,6 +354,8 @@ pub(crate) async fn pip_install(
                 .map(|entry| (&entry.requirement, entry.hashes.as_slice())),
             &markers,
         )?
+    } else if std::env::var("UV_DUMP_DREAM2NIX").is_ok() {
+        HashStrategy::Generate
     } else {
         HashStrategy::None
     };
@@ -486,7 +494,7 @@ pub(crate) async fn pip_install(
         .build();
 
     // Resolve the requirements.
-    let (dependency_graph, resolution) = match resolve(
+    let (dependency_graph, hashes, resolution) = match resolve(
         requirements,
         constraints,
         overrides,
@@ -510,6 +518,7 @@ pub(crate) async fn pip_install(
     {
         Ok(resolution) => (
             scrape_dependencies(&resolution),
+            resolution.hashes.clone(),
             Resolution::from(resolution),
         ),
         Err(Error::Resolve(uv_resolver::ResolveError::NoSolution(err))) => {
@@ -522,7 +531,7 @@ pub(crate) async fn pip_install(
     };
 
     if let Ok(dest) = std::env::var("UV_DUMP_DREAM2NIX") {
-        let nix_specs = to_nix_spec(&resolution, dependency_graph);
+        let nix_specs = to_nix_spec(&resolution, &hashes, dependency_graph);
         let nix_specs_json = serde_json::to_string_pretty(&nix_specs).unwrap();
         eprint!("Note: Writing nix specs to {dest}\n");
         fs::write(dest, nix_specs_json).await?;

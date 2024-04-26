@@ -57,7 +57,7 @@ pub struct ResolutionGraph {
     /// The underlying graph.
     petgraph: petgraph::graph::Graph<ResolvedDist, Range<Version>, petgraph::Directed>,
     /// The metadata for every distribution in this resolution.
-    hashes: FxHashMap<PackageName, Vec<HashDigest>>,
+    pub hashes: FxHashMap<PackageName, Vec<HashDigest>>,
     /// The enabled extras for every distribution in this resolution.
     extras: FxHashMap<PackageName, Vec<ExtraName>>,
     /// The set of editable requirements in this resolution.
