@@ -17,8 +17,7 @@ use url::Url;
 
 use distribution_types::ResolvedDist::Installable;
 use distribution_types::{
-    BuiltDist, Dist, DistributionMetadata, FileLocation, IndexLocations, InstalledMetadata,
-    LocalDist, LocalEditable, LocalEditables, Name, Resolution, SourceDist,
+    BuiltDist, Dist, DistributionMetadata, FileLocation, IndexLocations, InstalledMetadata, LocalDist, LocalEditable, LocalEditables, Name, Resolution, SourceDist
 };
 use install_wheel_rs::linker::LinkMode;
 use pep508_rs::{MarkerEnvironment, Requirement};
@@ -69,11 +68,13 @@ struct NixTargets {
 }
 #[derive(Debug, serde::Serialize)]
 struct NixSource {
-    sha256: String,
+    sha256: Option<String>,
     #[serde(rename = "type")]
     type_: String,
     url: String,
-    version: String,
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rev: Option<String>,
 }
 
 fn to_url(f: &FileLocation) -> String {
@@ -107,9 +108,10 @@ fn to_nix_specs(
                             .file
                             .hashes
                             .first()
-                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
-                        version: wheel.filename.version.to_string(),
+                            .map(|x| x.digest.to_string()),
+                        version: Some(wheel.filename.version.to_string()),
                         type_: "url".to_string(),
+                        rev: None,
                     },
                     Installable(Dist::Source(SourceDist::Registry(sdist))) => NixSource {
                         url: to_url(&sdist.file.url),
@@ -117,18 +119,43 @@ fn to_nix_specs(
                             .file
                             .hashes
                             .first()
-                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
-                        version: sdist.filename.version.to_string(),
+                            .map(|x| x.digest.to_string()),
+                        version: Some(sdist.filename.version.to_string()),
                         type_: "url".to_string(),
+                        rev: None,
                     },
                     Installable(Dist::Built(BuiltDist::DirectUrl(bdist))) => NixSource {
                         url: bdist.url.to_string(),
                         sha256: hashes
                             .get(pkg_name)
                             .and_then(|x| x.first())
-                            .map_or("no hash found".to_string(), |x| x.digest.to_string()),
-                        version: bdist.filename.version.to_string(),
+                            .map(|x| x.digest.to_string()),
+                        version: Some(bdist.filename.version.to_string()),
                         type_: "url".to_string(),
+                        rev: None,
+                    },
+                    Installable(Dist::Source(SourceDist::Git(dist))) => {
+                        let url: Url = dist.url.to_url();
+                        let mut url2 = url.to_string();
+                        // fix scheme if git+https:
+                        if url.scheme() == "git+https" {
+                            url2 = url2.replacen("git+https", "https", 1);
+                        } else {
+                            panic!("Only git+https is supported: {url:?}");
+                        }
+                        let rev = url2.rfind("@").map(|x| url2.split_off(x + 1));
+                        if rev.is_some() {
+                            url2.truncate(url2.len() - 1);
+                        }
+                        // first 8 chars
+                        let version = rev.as_ref().map(|x| x.chars().take(8).collect());
+                        NixSource {
+                            url: url2,
+                            sha256: None,
+                            version,
+                            type_: "git".to_string(),
+                            rev,
+                        }
                     },
                     _ => panic!("Only registry distributions are supported: {dist:?}"),
                 },
